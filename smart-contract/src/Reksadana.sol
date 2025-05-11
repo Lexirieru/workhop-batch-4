@@ -40,6 +40,12 @@ interface IAggregatorV3 {
 contract Reksadana is ERC20 {
     // errors
     error ZeroAmount();
+    error InsufficientShares();
+
+    // events
+    event Deposit(address user, uint256 amount, uint256 shares);
+    event Withdraw(address user, uint256 shares, uint256 amount);
+
     address uniswapRouter = 0xE592427A0AEce92De3Edee1F18E0157C05861564;
 
     // tokens
@@ -124,5 +130,60 @@ contract Reksadana is ERC20 {
             sqrtPriceLimitX96: 0
         });
         ISwapRouter(uniswapRouter).exactInputSingle(params);
+
+        emit Deposit(msg.sender, amount, shares);
+    }
+
+    function withdraw(uint256 shares) public {
+        if (shares == 0) revert ZeroAmount();
+        // shares tidak boleh lebih dari yg dimiliki user (msg.sender)
+        if (shares > balanceOf(msg.sender)) revert InsufficientShares();
+
+        uint256 totalShares = totalSupply();
+        uint256 PROPORTION_SCALED = 1e18;
+
+        // hitung proporsi
+        uint256 proportion = (shares * PROPORTION_SCALED) / totalShares;
+
+        uint256 amountWbtc = (IERC20(wbtc).balanceOf(address(this)) *
+            proportion) / PROPORTION_SCALED;
+        uint256 amountWeth = (IERC20(weth).balanceOf(address(this)) *
+            proportion) / PROPORTION_SCALED;
+
+        _burn(msg.sender, shares);
+
+        // swap wbtc ke usdc
+        IERC20(wbtc).approve(uniswapRouter, amountWbtc);
+        ISwapRouter.ExactInputSingleParams memory params = ISwapRouter
+            .ExactInputSingleParams({
+                tokenIn: wbtc,
+                tokenOut: usdc,
+                fee: 3000,
+                recipient: address(this),
+                deadline: block.timestamp,
+                amountIn: amountWbtc,
+                amountOutMinimum: 0,
+                sqrtPriceLimitX96: 0
+            });
+        ISwapRouter(uniswapRouter).exactInputSingle(params);
+
+        // swap weth ke usdc
+        IERC20(weth).approve(uniswapRouter, amountWeth);
+        params = ISwapRouter.ExactInputSingleParams({
+            tokenIn: weth,
+            tokenOut: usdc,
+            fee: 3000,
+            recipient: address(this),
+            deadline: block.timestamp,
+            amountIn: amountWeth,
+            amountOutMinimum: 0,
+            sqrtPriceLimitX96: 0
+        });
+        ISwapRouter(uniswapRouter).exactInputSingle(params);
+
+        uint256 amountUsdc = IERC20(usdc).balanceOf(address(this));
+        IERC20(usdc).transfer(msg.sender, amountUsdc);
+
+        emit Withdraw(msg.sender, shares, amountUsdc);
     }
 }
